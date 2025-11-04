@@ -258,6 +258,8 @@ bool QoiDecode(uint32_t &width, uint32_t &height, uint8_t &channels, uint8_t &co
                 g = pre_g;
                 b = pre_b;
                 a = pre_a;
+                // The run count includes the current pixel, so we need to decrement it
+                run--;
             } else if ((b1 & QOI_MASK_2) == QOI_OP_INDEX_TAG) {
                 int index = b1 & 0x3f;
                 r = history[index][0];
