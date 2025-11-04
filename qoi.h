@@ -76,7 +76,97 @@ bool QoiEncode(uint32_t width, uint32_t height, uint8_t channels, uint8_t colors
         b = QoiReadU8();
         if (channels == 4) a = QoiReadU8();
 
-        // TODO
+        // Calculate hash index for this pixel
+        int hash_index = QoiColorHash(r, g, b, a);
+
+        // Check if pixel is same as previous (for run-length encoding)
+        if (r == pre_r && g == pre_g && b == pre_b && a == pre_a) {
+            run++;
+            if (run == 62 || i == px_num - 1) {
+                QoiWriteU8(QOI_OP_RUN_TAG | (run - 1));
+                run = 0;
+            }
+            // Update hash table even during run
+            history[hash_index][0] = r;
+            history[hash_index][1] = g;
+            history[hash_index][2] = b;
+            history[hash_index][3] = a;
+            continue;
+        }
+
+        // Flush any remaining run
+        if (run > 0) {
+            QoiWriteU8(QOI_OP_RUN_TAG | (run - 1));
+            run = 0;
+        }
+
+        // Check if color exists in hash table (QOI_OP_INDEX)
+        if (history[hash_index][0] == r && history[hash_index][1] == g &&
+            history[hash_index][2] == b && history[hash_index][3] == a) {
+            QoiWriteU8(QOI_OP_INDEX_TAG | hash_index);
+            pre_r = r;
+            pre_g = g;
+            pre_b = b;
+            pre_a = a;
+            continue;
+        }
+
+        // Try QOI_OP_DIFF (small differences)
+        int8_t dr = r - pre_r;
+        int8_t dg = g - pre_g;
+        int8_t db = b - pre_b;
+        int8_t da = a - pre_a;
+
+        if (channels == 3) { // RGB mode
+            da = 0; // alpha doesn't change
+        }
+
+        if (dr >= -2 && dr <= 1 && dg >= -2 && dg <= 1 && db >= -2 && db <= 1 && da == 0) {
+            uint8_t b1 = QOI_OP_DIFF_TAG | ((dr + 2) << 4) | ((dg + 2) << 2) | (db + 2);
+            QoiWriteU8(b1);
+            pre_r = r;
+            pre_g = g;
+            pre_b = b;
+            pre_a = a;
+            continue;
+        }
+
+        // Try QOI_OP_LUMA (larger differences)
+        int8_t dg_green = dg;
+        int8_t dr_dg = dr - dg_green;
+        int8_t db_dg = db - dg_green;
+
+        if (dr_dg >= -8 && dr_dg <= 7 && db_dg >= -8 && db_dg <= 7 && dg_green >= -32 && dg_green <= 31 && da == 0) {
+            uint8_t b1 = QOI_OP_LUMA_TAG | (dg_green + 32);
+            uint8_t b2 = ((dr_dg + 8) << 4) | (db_dg + 8);
+            QoiWriteU8(b1);
+            QoiWriteU8(b2);
+            pre_r = r;
+            pre_g = g;
+            pre_b = b;
+            pre_a = a;
+            continue;
+        }
+
+        // Use QOI_OP_RGB or QOI_OP_RGBA
+        if (channels == 3) {
+            QoiWriteU8(QOI_OP_RGB_TAG);
+            QoiWriteU8(r);
+            QoiWriteU8(g);
+            QoiWriteU8(b);
+        } else {
+            QoiWriteU8(QOI_OP_RGBA_TAG);
+            QoiWriteU8(r);
+            QoiWriteU8(g);
+            QoiWriteU8(b);
+            QoiWriteU8(a);
+        }
+
+        // Update hash table with current pixel
+        history[hash_index][0] = r;
+        history[hash_index][1] = g;
+        history[hash_index][2] = b;
+        history[hash_index][3] = a;
 
         pre_r = r;
         pre_g = g;
@@ -119,10 +209,77 @@ bool QoiDecode(uint32_t &width, uint32_t &height, uint8_t &channels, uint8_t &co
 
     uint8_t r, g, b, a;
     a = 255u;
+    uint8_t pre_r = 0, pre_g = 0, pre_b = 0, pre_a = 255;
 
     for (int i = 0; i < px_num; ++i) {
 
-        // TODO
+        if (run > 0) {
+            run--;
+            // Use the same pixel as before
+            r = pre_r;
+            g = pre_g;
+            b = pre_b;
+            a = pre_a;
+        } else {
+            uint8_t b1 = QoiReadU8();
+
+            if (b1 == QOI_OP_RGB_TAG) {
+                r = QoiReadU8();
+                g = QoiReadU8();
+                b = QoiReadU8();
+            } else if (b1 == QOI_OP_RGBA_TAG) {
+                r = QoiReadU8();
+                g = QoiReadU8();
+                b = QoiReadU8();
+                a = QoiReadU8();
+            } else if ((b1 & QOI_MASK_2) == QOI_OP_RUN_TAG) {
+                run = (b1 & 0x3f);
+                // For the current pixel of a run, use the previous pixel
+                r = pre_r;
+                g = pre_g;
+                b = pre_b;
+                a = pre_a;
+            } else if ((b1 & QOI_MASK_2) == QOI_OP_INDEX_TAG) {
+                int index = b1 & 0x3f;
+                r = history[index][0];
+                g = history[index][1];
+                b = history[index][2];
+                a = history[index][3];
+            } else if ((b1 & QOI_MASK_2) == QOI_OP_DIFF_TAG) {
+                int8_t dr = ((b1 >> 4) & 0x03) - 2;
+                int8_t dg = ((b1 >> 2) & 0x03) - 2;
+                int8_t db = (b1 & 0x03) - 2;
+
+                r = (pre_r + dr) & 0xff;
+                g = (pre_g + dg) & 0xff;
+                b = (pre_b + db) & 0xff;
+                // alpha unchanged
+            } else if ((b1 & QOI_MASK_2) == QOI_OP_LUMA_TAG) {
+                uint8_t b2 = QoiReadU8();
+
+                int8_t dg_green = (b1 & 0x3f) - 32;
+                int8_t dr_dg = ((b2 >> 4) & 0x0f) - 8;
+                int8_t db_dg = (b2 & 0x0f) - 8;
+
+                g = (pre_g + dg_green) & 0xff;
+                r = (pre_g + dg_green + dr_dg) & 0xff;
+                b = (pre_g + dg_green + db_dg) & 0xff;
+                // alpha unchanged
+            }
+        }
+
+        // Update hash table
+        int hash_index = QoiColorHash(r, g, b, a);
+        history[hash_index][0] = r;
+        history[hash_index][1] = g;
+        history[hash_index][2] = b;
+        history[hash_index][3] = a;
+
+        // Update previous pixel
+        pre_r = r;
+        pre_g = g;
+        pre_b = b;
+        pre_a = a;
 
         QoiWriteU8(r);
         QoiWriteU8(g);
