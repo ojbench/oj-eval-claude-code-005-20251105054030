@@ -91,6 +91,10 @@ bool QoiEncode(uint32_t width, uint32_t height, uint8_t channels, uint8_t colors
             history[hash_index][1] = g;
             history[hash_index][2] = b;
             history[hash_index][3] = a;
+            pre_r = r;
+            pre_g = g;
+            pre_b = b;
+            pre_a = a;
             continue;
         }
 
@@ -104,6 +108,11 @@ bool QoiEncode(uint32_t width, uint32_t height, uint8_t channels, uint8_t colors
         if (history[hash_index][0] == r && history[hash_index][1] == g &&
             history[hash_index][2] == b && history[hash_index][3] == a) {
             QoiWriteU8(QOI_OP_INDEX_TAG | hash_index);
+            // Update hash table with current pixel
+            history[hash_index][0] = r;
+            history[hash_index][1] = g;
+            history[hash_index][2] = b;
+            history[hash_index][3] = a;
             pre_r = r;
             pre_g = g;
             pre_b = b;
@@ -124,6 +133,11 @@ bool QoiEncode(uint32_t width, uint32_t height, uint8_t channels, uint8_t colors
         if (dr >= -2 && dr <= 1 && dg >= -2 && dg <= 1 && db >= -2 && db <= 1 && da == 0) {
             uint8_t b1 = QOI_OP_DIFF_TAG | ((dr + 2) << 4) | ((dg + 2) << 2) | (db + 2);
             QoiWriteU8(b1);
+            // Update hash table with current pixel
+            history[hash_index][0] = r;
+            history[hash_index][1] = g;
+            history[hash_index][2] = b;
+            history[hash_index][3] = a;
             pre_r = r;
             pre_g = g;
             pre_b = b;
@@ -141,6 +155,11 @@ bool QoiEncode(uint32_t width, uint32_t height, uint8_t channels, uint8_t colors
             uint8_t b2 = ((dr_dg + 8) << 4) | (db_dg + 8);
             QoiWriteU8(b1);
             QoiWriteU8(b2);
+            // Update hash table with current pixel
+            history[hash_index][0] = r;
+            history[hash_index][1] = g;
+            history[hash_index][2] = b;
+            history[hash_index][3] = a;
             pre_r = r;
             pre_g = g;
             pre_b = b;
